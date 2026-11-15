@@ -369,6 +369,7 @@ def main():
 
 
 if __name__ == "__main__":
+    sys.stdout.reconfigure(line_buffering=True)   # show progress live, even when saved to a file
     try:
         main()
     except OandaError as e:
