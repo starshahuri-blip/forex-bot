@@ -159,9 +159,12 @@ def show(name, unit, net, gross=None):
     if gross is not None:
         print("   before costs: %+.2f %s, t=%.1f" % (gross["mean"], unit, gross["t"]))
     print("   after costs:  %+.2f %s, t=%.1f, %d trades" % (net["mean"], unit, net["t"], net["n"]))
-    print("   yearly: %.1f%% at 1x, Sharpe %.2f, worst drop %.0f %s"
-          % (net["ann"] / 100 if unit.startswith("bps") else net["ann"], net["sharpe"], net["dd"],
-             unit.split("/")[0]))
+    if unit.startswith("bps"):
+        yearly = "%.1f%% a year at 1x" % (net["ann"] / 100)
+    else:
+        yearly = "%+.1f R a year" % net["ann"]
+    print("   yearly: %s, Sharpe %.2f, worst drop %.0f %s"
+          % (yearly, net["sharpe"], net["dd"], unit.split("/")[0]))
     print("   positive years %d of %d, last 12 months %+.0f %s"
           % (net["years_pos"], net["years"], net["last12"], unit.split("/")[0]))
     print("   VERDICT: " + verdict(net, gross))
