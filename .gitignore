@@ -4,3 +4,4 @@ bot.log*
 STOP
 HALT
 __pycache__/
+data/
