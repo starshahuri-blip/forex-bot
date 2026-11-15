@@ -400,5 +400,23 @@ def main():
     report(run(datasets, pips, split_t), min_train=300)
 
 
+
+def friendly_main():
+    from oanda import OandaError
+    try:
+        main()
+    except OandaError as e:
+        if e.status in (401, 403):
+            print("\nOANDA stopped accepting the API token (it was probably replaced by a newer one).")
+            print("The trading bot uses the same token, so it is blocked too. To fix, paste:")
+            print("    cd ~/forex-bot && rm .env && bash install.sh")
+            print("and give it your NEWEST token. Prices already downloaded are kept, so the re-run is quick.")
+        else:
+            print("\nOANDA had a temporary problem (%s). Wait a minute and run this again." % e.status)
+        sys.exit(1)
+    except KeyboardInterrupt:
+        sys.exit(1)
+
+
 if __name__ == "__main__":
-    main()
+    friendly_main()
