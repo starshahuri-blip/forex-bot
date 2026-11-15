@@ -30,7 +30,8 @@ FIELDS = ["bo", "bh", "bl", "bc", "ao", "ah", "al", "ac"]
 PAIRS = ["EUR_USD", "GBP_USD", "USD_JPY", "AUD_USD", "USD_CAD", "USD_CHF", "NZD_USD",
          "EUR_GBP", "EUR_JPY", "AUD_NZD"]
 GRANS = {"M5": 1, "M15": 3}
-WINDOWS = {"DAY": (7, 19), "ASIA": (23, 6)}     # UTC hours when new trades are allowed
+WINDOWS = {"DAY": (7, 19), "ASIA": (23, 6), "SWING": None}   # UTC hours when new trades are allowed
+# SWING = any weekday hour except the 21:00-23:00 UTC rollover; holds overnight, closes Friday 20:00 UTC
 MR_SD = [2.0, 2.5, 3.0]
 MR_STOP = [2.0, 3.0, 4.0]
 MR_ADX = [25, 100]
@@ -43,10 +44,10 @@ def in_win(hr, s, e):
     return s <= hr < e if s < e else (hr >= s or hr < e)
 
 
-def fetch(api, pair, days):
-    """M5 bid/ask candles, cached on disk for a day so re-runs are quick."""
+def fetch(api, pair, days, gran="M5", step=300):
+    """Bid/ask candles, cached on disk for a day so re-runs are quick."""
     os.makedirs(DATA, exist_ok=True)
-    path = os.path.join(DATA, "%s_%d.pkl" % (pair, days))
+    path = os.path.join(DATA, "%s_%s_%d.pkl" % (pair, gran, days))
     if os.path.exists(path) and time.time() - os.path.getmtime(path) < 86400:
         with open(path, "rb") as f:
             return pickle.load(f)
@@ -55,7 +56,7 @@ def fetch(api, pair, days):
         d[k] = array("d")
     start = datetime.now(timezone.utc) - timedelta(days=days)
     while True:
-        cs = api.candles(pair, "M5", count=5000, frm=start.strftime("%Y-%m-%dT%H:%M:%SZ"), price="BA")
+        cs = api.candles(pair, gran, count=5000, frm=start.strftime("%Y-%m-%dT%H:%M:%SZ"), price="BA")
         last = None
         for c in cs:
             if not c.get("complete"):
@@ -68,20 +69,20 @@ def fetch(api, pair, days):
                 d[k].append(float(src[f]))
         if last is None or len(cs) < 5000:
             break
-        start = last + timedelta(seconds=300)
+        start = last + timedelta(seconds=step)
     with open(path, "wb") as f:
         pickle.dump(d, f)
     return d
 
 
-def aggregate(d, k):
-    """Build 10- or 15-minute bars out of 5-minute bars."""
+def aggregate(d, k, base=300):
+    """Build bigger bars out of smaller ones (e.g. 15-minute from 5-minute, 4-hour from 1-hour)."""
     if k == 1:
         return d
     out = {"t": array("q")}
     for f in FIELDS:
         out[f] = array("d")
-    width = 300 * k
+    width = base * k
     cur = None
     for i in range(len(d["t"])):
         g = d["t"][i] // width
@@ -121,7 +122,12 @@ class Bars:
             t = d["t"][i]
             wd = (t // 86400 + 3) % 7
             hr = (t % 86400) // 3600
-            for w, (ws, we) in WINDOWS.items():
+            for w, hours in WINDOWS.items():
+                if hours is None:
+                    self.flat[w][i] = wd > 4 or (wd == 4 and hr >= 20)
+                    self.sess[w][i] = wd <= 4 and hr not in (21, 22) and not (wd == 4 and hr >= cfg.FRIDAY_LAST_ENTRY_UTC)
+                    continue
+                ws, we = hours
                 self.flat[w][i] = not in_win(hr, ws, (we + 1) % 24)
                 ok = in_win(hr, ws, we) and not (wd == 4 and hr >= cfg.FRIDAY_LAST_ENTRY_UTC)
                 if ws < we and wd > 4:
@@ -201,7 +207,7 @@ def range_cands(b, k, entry_end):
     return out
 
 
-def simulate(b, cands, pip, win, stop_atr, target_r, be, adx_lo, adx_hi):
+def simulate(b, cands, pip, win, stop_atr, target_r, be, adx_lo, adx_hi, trail=0.0, fin_pips=0.0):
     """Walk each signal forward to its exit. Buys fill at the ask and close at the bid (and the
     reverse for sells), so the spread is paid on every trade. Returns [(exit_time, R)]."""
     d = b.d
@@ -248,13 +254,20 @@ def simulate(b, cands, pip, win, stop_atr, target_r, be, adx_lo, adx_hi):
             elif (side > 0 and hi >= tp) or (side < 0 and lo <= tp):
                 px = tp
             if px is not None:
-                res.append((t[k], side * (px - entry) / dist))
+                r = side * (px - entry) / dist
+                if fin_pips:
+                    r -= fin_pips * pip * ((t[k] - t[j]) / 86400.0) / dist   # cost of holding overnight
+                res.append((t[k], r))
                 free_from = k
                 break
             if be and (sl - entry) * side < 0:
                 best = hi if side > 0 else lo
                 if (best - entry) * side >= be * dist:
                     sl = entry
+            if trail:
+                new = (hi if side > 0 else lo) - side * trail * atr[i]
+                if (new - sl) * side > 0:
+                    sl = new                              # ratchet the stop behind the best price
             k += 1
     return res
 
@@ -308,7 +321,7 @@ def run(datasets, pips, split_t, progress=print):
             b = Bars(aggregate(m5, k))
             for sdv in MR_SD:
                 cands = b.meanrev_cands(sdv)
-                for win in WINDOWS:
+                for win in ("DAY", "ASIA"):
                     for st in MR_STOP:
                         for ax in MR_ADX:
                             key = "REVERT %-4s %-3s bands=%.1f stop=%.1f adx<=%d" % (win, gname, sdv, st, ax)
@@ -362,9 +375,10 @@ def report(accs, min_train=200):
                                                     for p, (n, t) in sorted(a.pairs.items())))
     if n_pass >= 5:
         print("\nVERDICT: PROMISING. Several of the top settings held up on unseen prices.")
-    else:
-        print("\nVERDICT: WEAK. Only %d of %d held up, so this may still be luck. Practice-test only." % (n_pass, len(top)))
-    return k
+        return k
+    print("\nVERDICT: WEAK. Only %d of %d held up. Random prices produce results like this, so treat it" % (n_pass, len(top)))
+    print("as luck. Do not go live.")
+    return None
 
 
 def main():
