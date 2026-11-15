@@ -76,10 +76,15 @@ def main():
         print("\nUsing %s (the only usable account)." % account)
     else:
         pick = input("\nType the number of the account the bot should trade, then press Enter: ").strip()
-        if not pick.isdigit() or not (1 <= int(pick) <= len(usable)):
-            print("That was not one of the numbers. Re-run this and type e.g. 1")
+        ends = [u for u in usable if pick and u.endswith(pick)]
+        if len(pick) < 3 and pick.isdigit() and 1 <= int(pick) <= len(usable):
+            account = usable[int(pick) - 1]            # typed the list number, e.g. 2
+        elif len(ends) == 1:
+            account = ends[0]                          # typed the account's ending, e.g. 003
+        else:
+            print("That did not match one account. Re-run this and type the number before the bracket, e.g. 1")
             return 1
-        account = usable[int(pick) - 1]
+        print("Using %s." % account)
 
     path = os.path.join(HERE, ".env")
     with open(path, "w") as f:
