@@ -394,8 +394,15 @@ def main():
     print("Downloading prices and testing (about 5-10 minutes; it prints a line per pair)...")
 
     def datasets():
+        from oanda import OandaError
         for p in pairs:
-            yield p, fetch(api, p, days)
+            try:
+                data = fetch(api, p, days)
+            except OandaError:
+                api.summary()                  # if the token itself is dead, this raises and we stop
+                print("  %s skipped (OANDA would not send its prices; the token is fine)" % p)
+                continue
+            yield p, data
 
     report(run(datasets, pips, split_t), min_train=300)
 
