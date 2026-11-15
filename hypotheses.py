@@ -314,11 +314,16 @@ def main():
             print("  %s not offered on this account, skipped" % p)
             continue
         t0 = time.time()
-        try:
-            d = fetch(api, p, YEARS_M5)
-        except OandaError:
-            api.summary()
-            print("  %s skipped (OANDA would not send its prices)" % p)
+        d = None
+        for attempt in range(4):                 # OANDA sometimes refuses a download for a moment
+            try:
+                d = fetch(api, p, YEARS_M5)
+                break
+            except OandaError:
+                api.summary()                    # raises if the token itself is dead
+                time.sleep(15 * (attempt + 1))
+        if d is None:
+            print("  %s skipped (OANDA refused its prices 4 times)" % p)
             continue
         clock_tests(p, d, pip[p], acc)
         print("  %s done (%d bars, %.0fs)" % (p, len(d["t"]), time.time() - t0))
