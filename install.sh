@@ -19,11 +19,7 @@ if [ "$1" = "live" ]; then
 fi
 
 if [ ! -f .env ]; then
-  echo ""
-  read -rp "Paste your OANDA $MODE API token, then press Enter: " TOKEN </dev/tty
-  read -rp "Paste your OANDA $MODE account ID (looks like 101-001-1234567-001): " ACCT </dev/tty
-  printf 'OANDA_TOKEN=%s\nOANDA_ACCOUNT=%s\nOANDA_ENV=%s\n' "$TOKEN" "$ACCT" "$MODE" > .env
-  chmod 600 .env
+  python3 setup.py "$MODE" </dev/tty || exit 1
 fi
 
 echo ""
